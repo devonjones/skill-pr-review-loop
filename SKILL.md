@@ -33,67 +33,83 @@ Track review cycles. After 2-3 iterations, evaluate:
 - Are we fixing the same type of issue repeatedly?
 - Is the reviewer finding fewer/lower-priority issues?
 
-**If reviews feel like bikeshedding, ask the user:** "We've done N review cycles. The remaining feedback seems like diminishing returns (style nits, unlikely edge cases). Ready to merge, or want to address more?"
+**IMPORTANT: Always do ONE MORE loop after you think you've hit diminishing returns.** Gemini sometimes holds good feedback back until later cycles.
 
-## Responding to Reviews
-
-**By default, scripts only show unresolved threads.** Use `--all` to include resolved.
-
-Reply to comments and they auto-resolve:
-```bash
-# Get unresolved comments with IDs
-~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids
-
-# Reply (auto-resolves the thread)
-~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Fixed in abc123"
-
-# Use --no-resolve to reply without resolving
-~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Acknowledged" --no-resolve
-```
-
-**Reply templates:**
-- Fixed: "Fixed in [commit]" or "Fixed - [description]"
-- Won't fix: "Won't fix - [reason]"
-- Deferred: "Good catch, tracking in #issue"
+**After the extra loop**, if still diminishing returns, ask the user: "We've done N review cycles. The remaining feedback seems like diminishing returns (style nits, unlikely edge cases). Ready to merge, or want to address more?"
 
 ## Autonomous Loop Workflow
 
-For autonomous review loops (when user grants script access):
+**CRITICAL RULES - NEVER VIOLATE THESE:**
+1. **ALWAYS reply to EVERY comment** using `reply-to-comment.sh` - never leave a comment without a reply
+2. **ALWAYS use `commit-and-push.sh`** - never use raw git commit/push commands
+3. **ALWAYS start background watcher after pushing** - do not wait for user to tell you about reviews
+4. **NEVER use sleep to wait for reviews** - poll the background watcher output instead
 
-### 1. Check for unresolved comments
+### The Loop
+
+```
+1. Get unresolved comments
+2. For EACH comment: fix OR decide to skip, then REPLY using reply-to-comment.sh
+3. Use commit-and-push.sh with --trigger-review (NEVER raw git commands)
+4. Start background watcher (MANDATORY)
+5. Poll watcher output with TaskOutput until new reviews detected
+6. Go to step 1
+7. When no new unresolved: do ONE MORE loop, then ask user about merge
+```
+
+### Step-by-step
+
+**1. Check for unresolved comments:**
 ```bash
 ~/.claude/skills/pr-review-loop/scripts/summarize-reviews.sh <PR>
 ~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids
 ```
 
-### 2. For each unresolved comment
+**2. For EACH unresolved comment (MANDATORY - never skip this):**
 - Evaluate if suggestion is worthwhile
 - Apply fix locally OR decide to skip
-- Reply explaining action (auto-resolves thread)
-
-### 3. Commit and trigger next review
+- **ALWAYS reply using the script** - this resolves the thread:
 ```bash
-pre-commit run --all-files
-~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "fix: description" --trigger-review
+~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Fixed - description"
+# OR
+~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Won't fix - reason"
 ```
 
-### 4. Wait for new reviews
+**3. Commit and push (ALWAYS use the script, NEVER raw git):**
+```bash
+~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "fix: description" --trigger-review
+```
+This script runs pre-commit, commits with proper footer, pushes, and triggers the next review.
+
+**4. IMMEDIATELY start background watcher:**
 ```bash
 ~/.claude/skills/pr-review-loop/scripts/watch-pr.sh <PR> &
 ```
+Use `run_in_background: true` with Bash tool.
 
-### 5. Repeat until no unresolved comments or diminishing returns
+**5. Poll watcher output (do NOT sleep):**
+Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase.
+
+**6. When new reviews detected, go to step 1**
+
+## Reply Templates
+
+**ALWAYS reply to every comment using `reply-to-comment.sh`.** Use these templates:
+- Fixed: "Fixed - [description]"
+- Won't fix: "Won't fix - [reason]"
+- Deferred: "Good catch, tracking in #issue"
+- Acknowledged: "Acknowledged - [explanation]"
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `get-review-comments.sh <PR> [--with-ids] [--all]` | Fetch unresolved comments (use --all for resolved too) |
+| `commit-and-push.sh "msg" [--trigger-review]` | **ALWAYS USE** - Never use raw git commit/push |
+| `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
+| `watch-pr.sh <PR>` | **ALWAYS RUN** - Background monitor after every push |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
-| `reply-to-comment.sh <PR> <id> "msg" [--no-resolve]` | Reply and auto-resolve thread |
-| `commit-and-push.sh "msg" [--trigger-review]` | Commit, push, optionally request review |
+| `get-review-comments.sh <PR> [--with-ids] [--all]` | Fetch unresolved comments |
 | `trigger-review.sh [PR]` | Post `/gemini review` comment to PR |
-| `watch-pr.sh <PR>` | Background monitor for CI + review comments |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 
 ## Permission Setup

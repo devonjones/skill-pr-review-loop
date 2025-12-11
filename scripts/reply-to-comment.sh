@@ -14,6 +14,8 @@ NO_RESOLVE="${4:-}"
 
 # Get repo info
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
 echo "Replying to comment $COMMENT_ID on PR #$PR_NUMBER..."
 
@@ -27,38 +29,40 @@ echo "Reply posted."
 
 # Resolve the thread unless --no-resolve is specified
 if [[ "$NO_RESOLVE" != "--no-resolve" ]]; then
-    # Get the node_id for the comment to resolve the thread
-    NODE_ID=$(gh api "repos/$REPO/pulls/comments/$COMMENT_ID" --jq '.node_id')
+    echo "Resolving thread..."
 
-    if [[ -n "$NODE_ID" ]]; then
-        echo "Resolving thread..."
-
-        # Use GraphQL to resolve the review thread
-        # First, we need to get the thread ID from the comment
-        THREAD_ID=$(gh api graphql -f query="
-            query {
-                node(id: \"$NODE_ID\") {
-                    ... on PullRequestReviewComment {
-                        pullRequestReviewThread {
+    # Get thread ID by finding the thread that contains this comment
+    THREAD_ID=$(gh api graphql -f query="
+        query(\$owner: String!, \$repo: String!, \$pr: Int!) {
+            repository(owner: \$owner, name: \$repo) {
+                pullRequest(number: \$pr) {
+                    reviewThreads(first: 100) {
+                        nodes {
                             id
+                            comments(first: 1) {
+                                nodes {
+                                    databaseId
+                                }
+                            }
                         }
                     }
                 }
             }
-        " --jq '.data.node.pullRequestReviewThread.id' 2>/dev/null || echo "")
+        }
+    " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" \
+    --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[0].databaseId == $COMMENT_ID) | .id" 2>/dev/null || echo "")
 
-        if [[ -n "$THREAD_ID" && "$THREAD_ID" != "null" ]]; then
-            gh api graphql -f query="
-                mutation {
-                    resolveReviewThread(input: {threadId: \"$THREAD_ID\"}) {
-                        thread {
-                            isResolved
-                        }
+    if [[ -n "$THREAD_ID" && "$THREAD_ID" != "null" ]]; then
+        gh api graphql -f query="
+            mutation(\$threadId: ID!) {
+                resolveReviewThread(input: {threadId: \$threadId}) {
+                    thread {
+                        isResolved
                     }
                 }
-            " > /dev/null 2>&1 && echo "Thread resolved." || echo "Warning: Could not resolve thread."
-        else
-            echo "Warning: Could not find thread ID to resolve."
-        fi
+            }
+        " -f threadId="$THREAD_ID" > /dev/null 2>&1 && echo "Thread resolved." || echo "Warning: Could not resolve thread."
+    else
+        echo "Warning: Could not find thread ID to resolve."
     fi
 fi
