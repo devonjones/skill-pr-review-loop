@@ -33,9 +33,15 @@ Track review cycles. After 2-3 iterations, evaluate:
 - Are we fixing the same type of issue repeatedly?
 - Is the reviewer finding fewer/lower-priority issues?
 
-**IMPORTANT: Always do ONE MORE loop after you think you've hit diminishing returns.** Gemini sometimes holds good feedback back until later cycles.
+**ONE MORE LOOP rule**: When you reach a point where there are no unresolved comments (or only "Won't fix" responses), do ONE additional review cycle to catch any final feedback Gemini may have held back.
 
-**After the extra loop**, if still diminishing returns, ask the user: "We've done N review cycles. The remaining feedback seems like diminishing returns (style nits, unlikely edge cases). Ready to merge, or want to address more?"
+**Tracking state**: Use TodoWrite to track whether you're in the "final verification loop". Create a todo like "Final verification loop - if no actionable feedback, ready to merge".
+
+**Reset condition**: If the final verification loop produces feedback you actually fix (not just "Won't fix"), remove the "final verification loop" todo - you need a fresh "one more" after pushing those fixes.
+
+**Exit condition**: If the "final verification loop" todo exists AND you get no actionable feedback (only nitpicks/won't-fix responses), you're done - ask about merge.
+
+**After the final loop**, ask the user: "We've completed the review cycles. Ready to merge, or want to address more?"
 
 ## Autonomous Loop Workflow
 
@@ -87,8 +93,8 @@ This script runs pre-commit, commits with proper footer, pushes, and triggers th
 ```
 Use `run_in_background: true` with Bash tool.
 
-**5. Poll watcher output for up to 5 minutes (do NOT sleep):**
-Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase. **Wait at least 5 minutes** before concluding no new reviews are coming - Gemini can take time to respond.
+**5. Poll watcher output for up to 5 minutes from review trigger (do NOT sleep):**
+Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase. **Wait at least 5 minutes from when `/gemini review` was posted** (not from when the watcher started) before concluding no new reviews are coming - Gemini can take time to respond.
 
 **6. When new reviews detected, go to step 1**
 
