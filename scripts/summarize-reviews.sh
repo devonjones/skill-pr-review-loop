@@ -1,25 +1,73 @@
 #!/bin/bash
 # Summarize review comments by priority and file
-# Usage: summarize-reviews.sh <pr-number> [repo]
+# Usage: summarize-reviews.sh <pr-number> [--all]
+#
+# Options:
+#   --all    Include resolved threads (default: unresolved only)
 
 set -euo pipefail
 
-PR_NUMBER="${1:?Usage: summarize-reviews.sh <pr-number> [repo]}"
-REPO="${2:-}"
+PR_NUMBER="${1:?Usage: summarize-reviews.sh <pr-number> [--all]}"
+INCLUDE_RESOLVED=false
 
-REPO_FLAG=""
-if [[ -n "$REPO" ]]; then
-    REPO_FLAG="-R $REPO"
-fi
+for arg in "$@"; do
+    if [[ "$arg" == "--all" ]]; then
+        INCLUDE_RESOLVED=true
+    fi
+done
+
+# Get repo info
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
 echo "=== PR #$PR_NUMBER Review Summary ==="
 echo ""
 
-# Get comments
-COMMENTS=$(gh api $REPO_FLAG repos/:owner/:repo/pulls/$PR_NUMBER/comments 2>/dev/null)
+# Use GraphQL to get review threads with resolution status
+QUERY='
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          comments(first: 1) {
+            nodes {
+              path
+              line
+              originalLine
+              body
+            }
+          }
+        }
+      }
+    }
+  }
+}
+'
 
-if [[ -z "$COMMENTS" || "$COMMENTS" == "[]" ]]; then
+RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null)
+
+if [[ -z "$RESULT" ]]; then
     echo "No review comments."
+    exit 0
+fi
+
+# Extract comments based on resolution filter
+COMMENTS=$(echo "$RESULT" | jq --argjson resolved "$INCLUDE_RESOLVED" '
+    [.data.repository.pullRequest.reviewThreads.nodes[] |
+     select($resolved or .isResolved == false) |
+     .comments.nodes[0] |
+     select(. != null)]
+')
+
+if [[ "$COMMENTS" == "[]" ]]; then
+    if [[ "$INCLUDE_RESOLVED" == "false" ]]; then
+        echo "No unresolved review comments."
+    else
+        echo "No review comments."
+    fi
     exit 0
 fi
 
@@ -46,5 +94,5 @@ echo "## High Priority Items"
 echo "$COMMENTS" | jq -r '
     .[] |
     select(.body | test("!\\[high\\]")) |
-    "- [\(.path):\(.line // "?")] \(.body | split("\n")[0] | gsub("!\\[high\\]\\([^)]+\\)"; "") | .[0:80])"
+    "- [\(.path):\(.line // .originalLine // "?")] \(.body | split("\n")[0] | gsub("!\\[high\\]\\([^)]+\\)"; "") | .[0:80])"
 '

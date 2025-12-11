@@ -37,66 +37,64 @@ Track review cycles. After 2-3 iterations, evaluate:
 
 ## Responding to Reviews
 
-Always respond to review comments in GitHub to document decisions:
+**By default, scripts only show unresolved threads.** Use `--all` to include resolved.
 
-### Get comments with IDs
+Reply to comments and they auto-resolve:
 ```bash
+# Get unresolved comments with IDs
 ~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids
-```
 
-### Reply to a comment (fixed, won't fix, etc.)
-```bash
+# Reply (auto-resolves the thread)
 ~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Fixed in abc123"
-~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Won't fix - this is Linux-only"
-```
 
-### Resolve/hide a comment thread
-```bash
-~/.claude/skills/pr-review-loop/scripts/resolve-comment.sh <node-id> RESOLVED
-~/.claude/skills/pr-review-loop/scripts/resolve-comment.sh <node-id> OUTDATED
+# Use --no-resolve to reply without resolving
+~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh <PR> <comment-id> "Acknowledged" --no-resolve
 ```
 
 **Reply templates:**
-- Fixed: "Fixed in [commit]"
+- Fixed: "Fixed in [commit]" or "Fixed - [description]"
 - Won't fix: "Won't fix - [reason]"
-- Acknowledged but deferred: "Good catch, but out of scope for this PR. Tracking in #issue"
+- Deferred: "Good catch, tracking in #issue"
 
 ## Autonomous Loop Workflow
 
 For autonomous review loops (when user grants script access):
 
-### 1. Fetch reviews with IDs
+### 1. Check for unresolved comments
 ```bash
-~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --latest --with-ids
+~/.claude/skills/pr-review-loop/scripts/summarize-reviews.sh <PR>
+~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids
 ```
 
-### 2. For each comment: fix or dismiss
-- Apply fix locally
-- Reply to comment explaining action taken
-- Resolve the thread
+### 2. For each unresolved comment
+- Evaluate if suggestion is worthwhile
+- Apply fix locally OR decide to skip
+- Reply explaining action (auto-resolves thread)
 
-### 3. Run pre-commit and commit
+### 3. Commit and trigger next review
 ```bash
 pre-commit run --all-files
 ~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "fix: description" --trigger-review
 ```
 
-### 4. Monitor for next review cycle
+### 4. Wait for new reviews
 ```bash
 ~/.claude/skills/pr-review-loop/scripts/watch-pr.sh <PR> &
 ```
+
+### 5. Repeat until no unresolved comments or diminishing returns
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
+| `get-review-comments.sh <PR> [--with-ids] [--all]` | Fetch unresolved comments (use --all for resolved too) |
+| `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
+| `reply-to-comment.sh <PR> <id> "msg" [--no-resolve]` | Reply and auto-resolve thread |
 | `commit-and-push.sh "msg" [--trigger-review]` | Commit, push, optionally request review |
 | `trigger-review.sh [PR]` | Post `/gemini review` comment to PR |
 | `watch-pr.sh <PR>` | Background monitor for CI + review comments |
-| `get-review-comments.sh <PR> [--latest] [--with-ids]` | Fetch formatted review comments |
-| `summarize-reviews.sh <PR>` | Summary by priority and file |
-| `reply-to-comment.sh <PR> <id> "msg"` | Reply to a review comment |
-| `resolve-comment.sh <node-id> [reason]` | Resolve/hide a comment thread |
+| `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 
 ## Permission Setup
 
@@ -104,7 +102,6 @@ To enable autonomous loops, user should grant access:
 ```
 Bash(~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh:*)
 Bash(~/.claude/skills/pr-review-loop/scripts/reply-to-comment.sh:*)
-Bash(~/.claude/skills/pr-review-loop/scripts/resolve-comment.sh:*)
 Bash(~/.claude/skills/pr-review-loop/scripts/trigger-review.sh:*)
 ```
 
