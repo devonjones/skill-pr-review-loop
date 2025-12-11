@@ -87,8 +87,8 @@ This script runs pre-commit, commits with proper footer, pushes, and triggers th
 ```
 Use `run_in_background: true` with Bash tool.
 
-**5. Poll watcher output (do NOT sleep):**
-Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase.
+**5. Poll watcher output for up to 5 minutes (do NOT sleep):**
+Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase. **Wait at least 5 minutes** before concluding no new reviews are coming - Gemini can take time to respond.
 
 **6. When new reviews detected, go to step 1**
 
