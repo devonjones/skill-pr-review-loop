@@ -4,11 +4,13 @@ description: |
   Manage the PR review feedback loop: monitor CI checks, fetch review comments, and iterate on fixes.
   Use when: (1) pushing changes to a PR and waiting for CI/reviews, (2) user says "new reviews available",
   (3) iterating on PR feedback from Gemini Code Assist or other reviewers, (4) monitoring PR status.
+  Includes Claude fallback when Gemini is rate-limited.
 ---
 
 # PR Review Loop
 
 Streamline the push-review-fix cycle for PRs with automated reviewers like Gemini Code Assist.
+Automatically detects Gemini rate limits and falls back to Claude agent for code reviews.
 
 ## Critical: Be Skeptical of Reviews
 
@@ -48,7 +50,7 @@ Track review cycles. After 2-3 iterations, evaluate:
 **CRITICAL RULES - NEVER VIOLATE THESE:**
 1. **ALWAYS reply to EVERY comment** using `reply-to-comment.sh` - never leave a comment without a reply
 2. **ALWAYS use `commit-and-push.sh`** - never use raw git commit/push commands
-3. **ALWAYS start background watcher after pushing** - do not wait for user to tell you about reviews
+3. **PR creation automatically triggers Gemini review** - wait up to 5 minutes after `gh pr create` before checking for comments (Gemini takes time to analyze). Subsequent pushes do NOT auto-trigger reviews - use `trigger-review.sh` or `--trigger-review` flag.
 4. **NEVER use sleep to wait for reviews** - poll the background watcher output instead
 
 ### The Loop
@@ -106,16 +108,68 @@ Use TaskOutput with `block: false` to check watcher output periodically. Look fo
 - Deferred: "Good catch, tracking in #issue"
 - Acknowledged: "Acknowledged - [explanation]"
 
+## Gemini Rate Limit Fallback
+
+Gemini Code Assist has a daily quota. When exceeded, the skill automatically detects this and provides Claude fallback.
+
+### Detection
+
+The `watch-pr.sh` and `trigger-review.sh` scripts detect rate limiting by checking for Gemini's quota warning message:
+> "You have reached your daily quota limit"
+
+### Fallback Options
+
+When rate-limited, you have two options:
+
+**Option 1: Use `--claude` flag**
+```bash
+~/.claude/skills/pr-review-loop/scripts/trigger-review.sh <PR> --claude
+```
+
+**Option 2: Run Claude review directly**
+```bash
+~/.claude/skills/pr-review-loop/scripts/claude-review.sh <PR>
+```
+
+This outputs a prompt for the Task tool to spawn a Claude agent that:
+1. Fetches the PR diff and changed files
+2. Reads the full files for context (not just the diff)
+3. Analyzes for critical, medium, and minor issues
+4. Posts a formatted review comment to the PR
+
+### Claude Review Workflow
+
+When using Claude fallback:
+
+1. **Run the script to get the prompt:**
+   ```bash
+   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh <PR>
+   ```
+
+2. **Use the Task tool with the generated prompt:**
+   ```
+   Task tool:
+     subagent_type: general-purpose
+     description: Review PR #<PR>
+     prompt: (copy from /tmp/claude_review_prompt_<PR>.txt)
+   ```
+
+3. **The agent will post the review as a PR comment**
+
+4. **Continue the normal review loop** - address comments using `reply-to-comment.sh`
+
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `commit-and-push.sh "msg" [--trigger-review]` | **ALWAYS USE** - Never use raw git commit/push |
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
-| `watch-pr.sh <PR>` | **ALWAYS RUN** - Background monitor after every push |
+| `watch-pr.sh <PR>` | **ALWAYS RUN** - Background monitor (detects quota limits) |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
 | `get-review-comments.sh <PR> [--with-ids] [--all]` | Fetch unresolved comments |
-| `trigger-review.sh [PR]` | Post `/gemini review` comment to PR |
+| `trigger-review.sh [PR] [--claude]` | Trigger review (Gemini or Claude with `--claude`) |
+| `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
+| `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 
 ## Permission Setup
