@@ -1,11 +1,12 @@
 #!/bin/bash
 # Get review comments for a PR, formatted for easy reading
-# Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all]
+# Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all] [--wait]
 #
 # Options:
 #   --latest      Only show comments on the latest commit
 #   --with-ids    Include comment IDs for replying/resolving
 #   --all         Include resolved threads (default: unresolved only)
+#   --wait        Poll for up to 5 minutes waiting for new comments to appear
 
 set -euo pipefail
 
@@ -15,6 +16,9 @@ shift
 LATEST_ONLY=false
 WITH_IDS=false
 INCLUDE_RESOLVED=false
+WAIT_FOR_COMMENTS=false
+WAIT_TIMEOUT=300  # 5 minutes
+POLL_INTERVAL=30
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             INCLUDE_RESOLVED=true
             shift
             ;;
+        --wait)
+            WAIT_FOR_COMMENTS=true
+            shift
+            ;;
         *)
             shift
             ;;
@@ -40,6 +48,73 @@ done
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+
+# Function to get current unresolved comment count
+get_comment_count() {
+    gh api graphql -f query='
+    query($owner: String!, $repo: String!, $pr: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 100) {
+            nodes {
+              isResolved
+            }
+          }
+        }
+      }
+    }' -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null | \
+    jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
+}
+
+# If --wait, poll until new comments appear or timeout
+if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
+    INITIAL_COUNT=$(get_comment_count)
+    ELAPSED=0
+
+    echo "Waiting for new review comments (current: $INITIAL_COUNT unresolved)..."
+    echo "Will poll every ${POLL_INTERVAL}s for up to ${WAIT_TIMEOUT}s (5 minutes)"
+    echo ""
+
+    while [[ $ELAPSED -lt $WAIT_TIMEOUT ]]; do
+        sleep "$POLL_INTERVAL"
+        ELAPSED=$((ELAPSED + POLL_INTERVAL))
+
+        CURRENT_COUNT=$(get_comment_count)
+
+        if [[ "$CURRENT_COUNT" -gt "$INITIAL_COUNT" ]]; then
+            echo "New comments detected! ($INITIAL_COUNT -> $CURRENT_COUNT)"
+            echo ""
+            break
+        fi
+
+        # Check for Gemini quota exceeded
+        QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+        if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
+            echo "Gemini is rate-limited. Use Claude fallback:"
+            echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
+            echo ""
+            exit 1
+        fi
+
+        echo "Still waiting... (${ELAPSED}s/${WAIT_TIMEOUT}s, $CURRENT_COUNT unresolved comments)"
+    done
+
+    if [[ $ELAPSED -ge $WAIT_TIMEOUT ]]; then
+        FINAL_COUNT=$(get_comment_count)
+        if [[ "$FINAL_COUNT" -eq "$INITIAL_COUNT" ]]; then
+            echo "No new comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
+            echo ""
+        fi
+    fi
+fi
+
+# Check for Gemini rate-limit in PR comments
+RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+if [[ "$RATE_LIMITED" == "true" ]]; then
+    echo "⚠️  Gemini is rate-limited. Use Claude fallback:"
+    echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
+    echo ""
+fi
 
 # Get latest commit if --latest flag
 SINCE_COMMIT=""

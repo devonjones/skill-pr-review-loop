@@ -4,13 +4,21 @@ description: |
   Manage the PR review feedback loop: monitor CI checks, fetch review comments, and iterate on fixes.
   Use when: (1) pushing changes to a PR and waiting for CI/reviews, (2) user says "new reviews available",
   (3) iterating on PR feedback from Gemini Code Assist or other reviewers, (4) monitoring PR status.
-  Includes Claude fallback when Gemini is rate-limited.
+
+  CRITICAL: When using this skill, NEVER use raw git commit/push commands. ALWAYS use commit-and-push.sh script.
+  The user has NOT granted permission for raw git commands - only the script is allowed.
 ---
 
 # PR Review Loop
 
 Streamline the push-review-fix cycle for PRs with automated reviewers like Gemini Code Assist.
 Automatically detects Gemini rate limits and falls back to Claude agent for code reviews.
+
+> **STOP: Before doing anything, remember these rules:**
+> - To commit/push: `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "message"`
+> - To check for reviews: `get-review-comments.sh <PR> --with-ids --wait`
+> - To trigger reviews: `trigger-review.sh <PR> --wait`
+> - **Raw `git commit` and `git push` are FORBIDDEN** - only the script is permitted
 
 ## Critical: Be Skeptical of Reviews
 
@@ -49,29 +57,41 @@ Track review cycles. After 2-3 iterations, evaluate:
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
 1. **ALWAYS reply to EVERY comment** using `reply-to-comment.sh` - never leave a comment without a reply
-2. **ALWAYS use `commit-and-push.sh`** - never use raw git commit/push commands
-3. **PR creation automatically triggers Gemini review** - wait up to 5 minutes after `gh pr create` before checking for comments (Gemini takes time to analyze). Subsequent pushes do NOT auto-trigger reviews - use `trigger-review.sh` or `--trigger-review` flag.
-4. **NEVER use sleep to wait for reviews** - poll the background watcher output instead
+2. **ALWAYS use `commit-and-push.sh`** - NEVER use raw git commit/push commands (see forbidden list below)
+3. **ALWAYS use `--wait` flag** when checking for comments - this ensures proper 5-minute polling
+4. **PR creation automatically triggers Gemini review** - use `get-review-comments.sh --wait` to wait for the first review
+
+### FORBIDDEN COMMANDS - Never use these during PR review loops:
+
+```
+git commit        # FORBIDDEN - use commit-and-push.sh instead
+git push          # FORBIDDEN - use commit-and-push.sh instead
+git commit -m     # FORBIDDEN - use commit-and-push.sh instead
+git push origin   # FORBIDDEN - use commit-and-push.sh instead
+```
+
+The user has only granted permission for the `commit-and-push.sh` script, not raw git commands.
+If you use raw git commands, they will be blocked and you will waste time.
 
 ### The Loop
 
 ```
-1. Get unresolved comments
+1. Get unresolved comments (use --wait to poll for up to 5 minutes)
 2. For EACH comment: fix OR decide to skip, then REPLY using reply-to-comment.sh
-3. Use commit-and-push.sh with --trigger-review (NEVER raw git commands)
-4. Start background watcher (MANDATORY)
-5. Poll watcher output with TaskOutput until new reviews detected
-6. Go to step 1
-7. When no new unresolved: do ONE MORE loop, then ask user about merge
+3. Use commit-and-push.sh (NEVER raw git commands)
+4. Trigger next review with --wait: trigger-review.sh <PR> --wait
+5. Go to step 1
+6. When no new unresolved: do ONE MORE loop, then ask user about merge
 ```
 
 ### Step-by-step
 
-**1. Check for unresolved comments:**
+**1. Check for unresolved comments (ALWAYS use --wait for first check after PR creation or push):**
 ```bash
 ~/.claude/skills/pr-review-loop/scripts/summarize-reviews.sh <PR>
-~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids
+~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh <PR> --with-ids --wait
 ```
+The `--wait` flag polls every 30s for up to 5 minutes, waiting for Gemini to respond. Do NOT skip this or use a shorter timeout.
 
 **2. For EACH unresolved comment (MANDATORY - never skip this):**
 - Evaluate if suggestion is worthwhile
@@ -85,20 +105,17 @@ Track review cycles. After 2-3 iterations, evaluate:
 
 **3. Commit and push (ALWAYS use the script, NEVER raw git):**
 ```bash
-~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "fix: description" --trigger-review
+~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "fix: description"
 ```
-This script runs pre-commit, commits with proper footer, pushes, and triggers the next review.
+This script runs pre-commit, commits with proper footer, and pushes.
 
-**4. IMMEDIATELY start background watcher:**
+**4. Trigger next review and wait for response:**
 ```bash
-~/.claude/skills/pr-review-loop/scripts/watch-pr.sh <PR> &
+~/.claude/skills/pr-review-loop/scripts/trigger-review.sh <PR> --wait
 ```
-Use `run_in_background: true` with Bash tool.
+The `--wait` flag polls for up to 5 minutes until new comments appear. Do NOT use sleep or manual polling.
 
-**5. Poll watcher output for up to 5 minutes from review trigger (do NOT sleep):**
-Use TaskOutput with `block: false` to check watcher output periodically. Look for "NEW REVIEW COMMENTS DETECTED" or comment count increase. **Wait at least 5 minutes from when `/gemini review` was posted** (not from when the watcher started) before concluding no new reviews are coming - Gemini can take time to respond.
-
-**6. When new reviews detected, go to step 1**
+**5. When new reviews detected, go to step 1**
 
 ## Reply Templates
 
@@ -162,12 +179,12 @@ When using Claude fallback:
 
 | Script | Purpose |
 |--------|---------|
-| `commit-and-push.sh "msg" [--trigger-review]` | **ALWAYS USE** - Never use raw git commit/push |
+| `commit-and-push.sh "msg"` | **ALWAYS USE** - Never use raw git commit/push |
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
-| `watch-pr.sh <PR>` | **ALWAYS RUN** - Background monitor (detects quota limits) |
+| `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch comments, polls 5min if --wait |
+| `trigger-review.sh [PR] [--wait] [--claude]` | **USE --wait** - Trigger review and poll for response |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
-| `get-review-comments.sh <PR> [--with-ids] [--all]` | Fetch unresolved comments |
-| `trigger-review.sh [PR] [--claude]` | Trigger review (Gemini or Claude with `--claude`) |
+| `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
