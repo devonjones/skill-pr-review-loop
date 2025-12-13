@@ -66,44 +66,50 @@ get_comment_count() {
     jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
 }
 
-# If --wait, poll until new comments appear or timeout
+# If --wait, poll until comments exist or timeout
 if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     INITIAL_COUNT=$(get_comment_count)
-    ELAPSED=0
 
-    echo "Waiting for new review comments (current: $INITIAL_COUNT unresolved)..."
-    echo "Will poll every ${POLL_INTERVAL}s for up to ${WAIT_TIMEOUT}s (5 minutes)"
-    echo ""
+    # If there are already unresolved comments, proceed immediately
+    if [[ "$INITIAL_COUNT" -gt 0 ]]; then
+        echo "Found $INITIAL_COUNT unresolved comment(s), proceeding..."
+        echo ""
+    else
+        ELAPSED=0
+        echo "Waiting for review comments (current: 0 unresolved)..."
+        echo "Will poll every ${POLL_INTERVAL}s for up to ${WAIT_TIMEOUT}s (5 minutes)"
+        echo ""
 
-    while [[ $ELAPSED -lt $WAIT_TIMEOUT ]]; do
-        sleep "$POLL_INTERVAL"
-        ELAPSED=$((ELAPSED + POLL_INTERVAL))
+        while [[ $ELAPSED -lt $WAIT_TIMEOUT ]]; do
+            sleep "$POLL_INTERVAL"
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
 
-        CURRENT_COUNT=$(get_comment_count)
+            CURRENT_COUNT=$(get_comment_count)
 
-        if [[ "$CURRENT_COUNT" -gt "$INITIAL_COUNT" ]]; then
-            echo "New comments detected! ($INITIAL_COUNT -> $CURRENT_COUNT)"
-            echo ""
-            break
-        fi
+            if [[ "$CURRENT_COUNT" -gt 0 ]]; then
+                echo "New comments detected! ($CURRENT_COUNT unresolved)"
+                echo ""
+                break
+            fi
 
-        # Check for Gemini quota exceeded
-        QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
-        if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
-            echo "Gemini is rate-limited. Use Claude fallback:"
-            echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
-            echo ""
-            exit 1
-        fi
+            # Check for Gemini quota exceeded
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
+                echo "Gemini is rate-limited. Use Claude fallback:"
+                echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
+                echo ""
+                exit 1
+            fi
 
-        echo "Still waiting... (${ELAPSED}s/${WAIT_TIMEOUT}s, $CURRENT_COUNT unresolved comments)"
-    done
+            echo "Still waiting... (${ELAPSED}s/${WAIT_TIMEOUT}s, $CURRENT_COUNT unresolved comments)"
+        done
 
-    if [[ $ELAPSED -ge $WAIT_TIMEOUT ]]; then
-        FINAL_COUNT=$(get_comment_count)
-        if [[ "$FINAL_COUNT" -eq "$INITIAL_COUNT" ]]; then
-            echo "No new comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
-            echo ""
+        if [[ $ELAPSED -ge $WAIT_TIMEOUT ]]; then
+            FINAL_COUNT=$(get_comment_count)
+            if [[ "$FINAL_COUNT" -eq 0 ]]; then
+                echo "No comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
+                echo ""
+            fi
         fi
     fi
 fi
