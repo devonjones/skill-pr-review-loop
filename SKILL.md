@@ -11,14 +11,23 @@ description: |
 
 # PR Review Loop
 
+## ⛔ STOP - READ THIS FIRST ⛔
+
+**YOU DO NOT HAVE PERMISSION TO USE RAW GIT COMMANDS.**
+
+| ❌ FORBIDDEN | ✅ USE INSTEAD |
+|--------------|----------------|
+| `git commit` | `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "msg"` |
+| `git commit -m "..."` | `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "msg"` |
+| `git push` | `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "msg"` |
+| `git push origin` | `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "msg"` |
+
+**If you use `git commit` or `git push` directly, it will be BLOCKED.**
+
+---
+
 Streamline the push-review-fix cycle for PRs with automated reviewers like Gemini Code Assist.
 Automatically detects Gemini rate limits and falls back to Claude agent for code reviews.
-
-> **STOP: Before doing anything, remember these rules:**
-> - To commit/push: `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "message"`
-> - To check for reviews: `get-review-comments.sh <PR> --with-ids --wait`
-> - To trigger reviews: `trigger-review.sh <PR> --wait`
-> - **Raw `git commit` and `git push` are FORBIDDEN** - only the script is permitted
 
 ## Critical: Be Skeptical of Reviews
 
@@ -56,22 +65,10 @@ Track review cycles. After 2-3 iterations, evaluate:
 ## Autonomous Loop Workflow
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
-1. **ALWAYS reply to EVERY comment** using `reply-to-comment.sh` - never leave a comment without a reply
-2. **ALWAYS use `commit-and-push.sh`** - NEVER use raw git commit/push commands (see forbidden list below)
+1. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
+2. **ALWAYS reply to EVERY comment** using `reply-to-comment.sh` - never leave a comment without a reply
 3. **ALWAYS use `--wait` flag** when checking for comments - this ensures proper 5-minute polling
 4. **PR creation automatically triggers Gemini review** - use `get-review-comments.sh --wait` to wait for the first review
-
-### FORBIDDEN COMMANDS - Never use these during PR review loops:
-
-```
-git commit        # FORBIDDEN - use commit-and-push.sh instead
-git push          # FORBIDDEN - use commit-and-push.sh instead
-git commit -m     # FORBIDDEN - use commit-and-push.sh instead
-git push origin   # FORBIDDEN - use commit-and-push.sh instead
-```
-
-The user has only granted permission for the `commit-and-push.sh` script, not raw git commands.
-If you use raw git commands, they will be blocked and you will waste time.
 
 ### The Loop
 
