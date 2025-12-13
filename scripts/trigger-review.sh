@@ -95,15 +95,22 @@ get_comment_count() {
     jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
 }
 
-# Get initial count before triggering
-INITIAL_COUNT=$(get_comment_count)
-
 gh pr comment "$PR_NUMBER" --body "/gemini review"
 echo "Review requested."
 
 if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
+    # Check immediately if there are already unresolved comments
+    CURRENT_COUNT=$(get_comment_count)
+    if [[ "$CURRENT_COUNT" -gt 0 ]]; then
+        echo "Found $CURRENT_COUNT unresolved comment(s), proceeding..."
+        echo ""
+        echo "Run get-review-comments.sh to see the feedback:"
+        echo "  ~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh $PR_NUMBER --with-ids"
+        exit 0
+    fi
+
     echo ""
-    echo "Waiting for review comments (current: $INITIAL_COUNT unresolved)..."
+    echo "Waiting for review comments..."
     echo "Will poll every ${POLL_INTERVAL}s for up to ${WAIT_TIMEOUT}s (5 minutes)"
     echo ""
 
@@ -114,8 +121,8 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 
         CURRENT_COUNT=$(get_comment_count)
 
-        if [[ "$CURRENT_COUNT" -gt "$INITIAL_COUNT" ]]; then
-            echo "New comments detected! ($INITIAL_COUNT -> $CURRENT_COUNT)"
+        if [[ "$CURRENT_COUNT" -gt 0 ]]; then
+            echo "New comments detected! ($CURRENT_COUNT unresolved)"
             echo ""
             echo "Run get-review-comments.sh to see the feedback:"
             echo "  ~/.claude/skills/pr-review-loop/scripts/get-review-comments.sh $PR_NUMBER --with-ids"
@@ -134,9 +141,9 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     done
 
     FINAL_COUNT=$(get_comment_count)
-    if [[ "$FINAL_COUNT" -eq "$INITIAL_COUNT" ]]; then
+    if [[ "$FINAL_COUNT" -eq 0 ]]; then
         echo ""
-        echo "No new comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
+        echo "No comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
     fi
 else
     echo "Comments typically arrive in 1-5 minutes."
