@@ -1,0 +1,21 @@
+{
+  "name": "pr-review-loop",
+  "owner": {
+    "name": "Devon Jones"
+  },
+  "metadata": {
+    "description": "PR review feedback loop skill",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "pr-review-loop",
+      "description": "Claude Code skill for managing PR review feedback loops with Gemini Code Assist and other reviewers",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/pr-review-loop"
+      ]
+    }
+  ]
+}
