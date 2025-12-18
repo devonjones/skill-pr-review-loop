@@ -1,19 +1,26 @@
 #!/bin/bash
-# Trigger a code review on a PR (Gemini with Claude fallback)
-# Usage: trigger-review.sh [pr-number] [--claude] [--wait]
+# Trigger a code review on a PR (supports Gemini, Cursor, Claude)
+# Usage: trigger-review.sh [pr-number] [--gemini|--cursor|--claude] [--wait]
+#
+# This script supports multiple review bot types:
+# - Gemini Code Assist: Manually triggered via /gemini review comment
+# - Cursor Bugbot: Auto-reviews on push (no manual trigger needed)
+# - Claude: Fallback using a Claude agent to review the PR
 #
 # By default, triggers Gemini Code Assist. If Gemini is rate-limited,
 # outputs instructions for Claude fallback.
 #
 # Options:
-#   --claude    Skip Gemini and use Claude agent directly
+#   --gemini    Trigger Gemini Code Assist review (default)
+#   --cursor    Check for Cursor Bugbot comments (auto-triggered on push)
+#   --claude    Use Claude agent for code review
 #   --wait      Poll for up to 5 minutes waiting for review comments to appear
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PR_NUMBER=""
-USE_CLAUDE=false
+BOT_TYPE="gemini"  # Default to gemini
 WAIT_FOR_COMMENTS=false
 WAIT_TIMEOUT=300  # 5 minutes
 POLL_INTERVAL=30
@@ -21,8 +28,16 @@ POLL_INTERVAL=30
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --gemini)
+            BOT_TYPE="gemini"
+            shift
+            ;;
+        --cursor)
+            BOT_TYPE="cursor"
+            shift
+            ;;
         --claude)
-            USE_CLAUDE=true
+            BOT_TYPE="claude"
             shift
             ;;
         --wait)
@@ -48,30 +63,41 @@ if [[ -z "$PR_NUMBER" ]]; then
     exit 1
 fi
 
-# If --claude flag, go directly to Claude
-if [[ "$USE_CLAUDE" == "true" ]]; then
+# Handle Claude fallback directly
+if [[ "$BOT_TYPE" == "claude" ]]; then
     echo "Using Claude agent for code review..."
     exec "$SCRIPT_DIR/claude-review.sh" "$PR_NUMBER"
 fi
 
-# Check if Gemini is already rate-limited before triggering
-if ! "$SCRIPT_DIR/check-gemini-quota.sh" "$PR_NUMBER" > /dev/null 2>&1; then
-    echo "!!! Gemini Code Assist is rate-limited !!!"
+# Handle Cursor - it auto-reviews on push, so we just wait for comments
+if [[ "$BOT_TYPE" == "cursor" ]]; then
+    echo "Cursor Bugbot auto-reviews on push. Checking for existing comments..."
     echo ""
-    echo "Options:"
-    echo "  1. Wait up to 24 hours for quota to reset"
-    echo "  2. Use Claude agent for code review:"
+    echo "Note: Cursor reviews typically appear within 1-2 minutes of push."
     echo ""
-    echo "     ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
-    echo ""
-    echo "  Or re-run with --claude flag:"
-    echo ""
-    echo "     ~/.claude/skills/pr-review-loop/scripts/trigger-review.sh $PR_NUMBER --claude"
-    echo ""
-    exit 1
+    # Skip to the waiting logic below
 fi
 
-echo "Triggering Gemini review on PR #$PR_NUMBER..."
+# For Gemini, check quota and trigger review
+if [[ "$BOT_TYPE" == "gemini" ]]; then
+    # Check if Gemini is already rate-limited before triggering
+    if ! "$SCRIPT_DIR/check-gemini-quota.sh" "$PR_NUMBER" > /dev/null 2>&1; then
+        echo "!!! Gemini Code Assist is rate-limited !!!"
+        echo ""
+        echo "Options:"
+        echo "  1. Wait up to 24 hours for quota to reset"
+        echo "  2. Use Cursor if available (auto-reviews on push):"
+        echo ""
+        echo "     ~/.claude/skills/pr-review-loop/scripts/trigger-review.sh $PR_NUMBER --cursor --wait"
+        echo ""
+        echo "  3. Use Claude agent for code review:"
+        echo ""
+        echo "     ~/.claude/skills/pr-review-loop/scripts/trigger-review.sh $PR_NUMBER --claude"
+        echo ""
+        exit 1
+    fi
+    echo "Triggering Gemini review on PR #$PR_NUMBER..."
+fi
 
 # Get repo info for GraphQL queries
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
@@ -95,8 +121,11 @@ get_comment_count() {
     jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
 }
 
-gh pr comment "$PR_NUMBER" --body "/gemini review"
-echo "Review requested."
+# Only Gemini needs a manual trigger command
+if [[ "$BOT_TYPE" == "gemini" ]]; then
+    gh pr comment "$PR_NUMBER" --body "/gemini review"
+    echo "Review requested."
+fi
 
 if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     # Check immediately if there are already unresolved comments
@@ -129,12 +158,14 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
             exit 0
         fi
 
-        # Check for Gemini quota exceeded
-        QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
-        if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
-            echo "Gemini is rate-limited. Use Claude fallback:"
-            echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
-            exit 1
+        # Check for Gemini quota exceeded (only relevant for Gemini bot)
+        if [[ "$BOT_TYPE" == "gemini" ]]; then
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
+                echo "Gemini is rate-limited. Use Claude fallback:"
+                echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
+                exit 1
+            fi
         fi
 
         echo "Still waiting... (${ELAPSED}s/${WAIT_TIMEOUT}s, $CURRENT_COUNT unresolved comments)"

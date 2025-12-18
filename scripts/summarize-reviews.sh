@@ -71,12 +71,43 @@ if [[ "$COMMENTS" == "[]" ]]; then
     exit 0
 fi
 
+# Priority detection function supports multiple bot formats:
+# - Gemini: ![critical], ![high], ![medium], ![low]
+# - Cursor: <!-- **High Severity** -->, <!-- **Critical Severity** -->
+# - Claude: **Critical**, ### Critical Issues, CRITICAL
+PRIORITY_DETECT='
+def detect_priority:
+    # Gemini format: ![critical], ![high], ![medium], ![low]
+    if test("!\\[critical\\]"; "i") then "critical"
+    elif test("!\\[high\\]"; "i") then "high"
+    elif test("!\\[medium\\]"; "i") then "medium"
+    elif test("!\\[low\\]"; "i") then "low"
+    # Cursor format: <!-- **High Severity** -->
+    elif test("Critical Severity"; "i") then "critical"
+    elif test("High Severity"; "i") then "high"
+    elif test("Medium Severity"; "i") then "medium"
+    elif test("Low Severity"; "i") then "low"
+    # Claude/general markdown: **Critical**, ### Critical, CRITICAL:
+    elif test("\\*\\*Critical"; "i") or test("### Critical"; "i") or test("CRITICAL:"; "") then "critical"
+    elif test("\\*\\*High"; "i") or test("### High"; "i") or test("HIGH:"; "") then "high"
+    elif test("\\*\\*Medium"; "i") or test("### Medium"; "i") or test("MEDIUM:"; "") then "medium"
+    elif test("\\*\\*Low"; "i") or test("### Low"; "i") or test("LOW:"; "") then "low"
+    # Cursor Bug headers
+    elif test("### Bug:"; "") then "high"
+    elif test("### Issue:"; "") then "medium"
+    elif test("### Suggestion:"; "") then "low"
+    else "unknown"
+    end;
+'
+
 # Count by priority
 echo "## By Priority"
-echo "$COMMENTS" | jq -r '
-    group_by(.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown") |
+echo "$COMMENTS" | jq -r "$PRIORITY_DETECT"'
+    [.[] | . + {priority: (.body | detect_priority)}] |
+    group_by(.priority) |
+    sort_by(.[0].priority | if . == "critical" then 0 elif . == "high" then 1 elif . == "medium" then 2 elif . == "low" then 3 else 4 end) |
     .[] |
-    "- \(.[0].body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown"): \(length) comments"
+    "- \(.[0].priority): \(length) comment(s)"
 '
 echo ""
 
@@ -85,14 +116,14 @@ echo "## By File"
 echo "$COMMENTS" | jq -r '
     group_by(.path) |
     .[] |
-    "- \(.[0].path): \(length) comments"
+    "- \(.[0].path): \(length) comment(s)"
 '
 echo ""
 
-# List high priority items
-echo "## High Priority Items"
-echo "$COMMENTS" | jq -r '
+# List critical and high priority items
+echo "## Critical/High Priority Items"
+echo "$COMMENTS" | jq -r "$PRIORITY_DETECT"'
     .[] |
-    select(.body | test("!\\[high\\]")) |
-    "- [\(.path):\(.line // .originalLine // "?")] \(.body | split("\n")[0] | gsub("!\\[high\\]\\([^)]+\\)"; "") | .[0:80])"
+    select((.body | detect_priority) == "critical" or (.body | detect_priority) == "high") |
+    "- [\(.path):\(.line // .originalLine // "?")] [\(.body | detect_priority)] \(.body | split("\n")[0] | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | .[0:80])"
 '

@@ -93,7 +93,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
             fi
 
             # Check for Gemini quota exceeded
-            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
             if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
                 echo "Gemini is rate-limited. Use Claude fallback:"
                 echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -115,7 +115,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 fi
 
 # Check for Gemini rate-limit in PR comments
-RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
 if [[ "$RATE_LIMITED" == "true" ]]; then
     echo "⚠️  Gemini is rate-limited. Use Claude fallback:"
     echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -164,26 +164,55 @@ if [[ -z "$RESULT" ]]; then
 fi
 
 # Process and filter the results
+# Priority detection supports multiple bot formats:
+# - Gemini: ![critical], ![high], ![medium], ![low]
+# - Cursor: <!-- **High Severity** -->, <!-- **Critical Severity** -->
+# - Claude: **Critical**, ### Critical Issues, CRITICAL
 echo "$RESULT" | jq -r --arg since "$SINCE_COMMIT" --argjson resolved "$INCLUDE_RESOLVED" --argjson withIds "$WITH_IDS" '
+    # Function to detect priority from various bot formats
+    def detect_priority:
+        # Gemini format: ![critical], ![high], ![medium], ![low]
+        if test("!\\[critical\\]"; "i") then "critical"
+        elif test("!\\[high\\]"; "i") then "high"
+        elif test("!\\[medium\\]"; "i") then "medium"
+        elif test("!\\[low\\]"; "i") then "low"
+        # Cursor format: <!-- **High Severity** -->
+        elif test("Critical Severity"; "i") then "critical"
+        elif test("High Severity"; "i") then "high"
+        elif test("Medium Severity"; "i") then "medium"
+        elif test("Low Severity"; "i") then "low"
+        # Claude/general markdown: **Critical**, ### Critical, CRITICAL:
+        elif test("\\*\\*Critical"; "i") or test("### Critical"; "i") or test("CRITICAL:"; "") then "critical"
+        elif test("\\*\\*High"; "i") or test("### High"; "i") or test("HIGH:"; "") then "high"
+        elif test("\\*\\*Medium"; "i") or test("### Medium"; "i") or test("MEDIUM:"; "") then "medium"
+        elif test("\\*\\*Low"; "i") or test("### Low"; "i") or test("LOW:"; "") then "low"
+        # Cursor Bug headers
+        elif test("### Bug:"; "") then "high"
+        elif test("### Issue:"; "") then "medium"
+        elif test("### Suggestion:"; "") then "low"
+        else "unknown"
+        end;
+
     .data.repository.pullRequest.reviewThreads.nodes[] |
     select($resolved or .isResolved == false) |
     .comments.nodes[0] as $comment |
     select($comment != null) |
     select($since == "" or ($comment.commit.oid // "") >= $since) |
+    ($comment.body | detect_priority) as $priority |
     if $withIds then
         "=== Comment ID: \($comment.databaseId) | Node ID: \($comment.id) ===",
         "File: \($comment.path):\($comment.line // $comment.originalLine // "?")",
-        "Priority: \($comment.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown")",
+        "Priority: \($priority)",
         "",
-        ($comment.body | gsub("!\\[(high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
+        ($comment.body | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
         "",
         "---",
         ""
     else
         "[\($comment.path):\($comment.line // $comment.originalLine // "?")]",
-        "Priority: \($comment.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown")",
+        "Priority: \($priority)",
         "",
-        ($comment.body | gsub("!\\[(high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
+        ($comment.body | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
         "",
         "---",
         ""
