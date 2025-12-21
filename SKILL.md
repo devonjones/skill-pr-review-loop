@@ -5,6 +5,9 @@ description: |
   Use when: (1) pushing changes to a PR and waiting for CI/reviews, (2) user says "new reviews available",
   (3) iterating on PR feedback from Gemini Code Assist or other reviewers, (4) monitoring PR status.
 
+  RECOMMENDED: Spawn a Task agent (subagent_type: general-purpose) to execute the review loop autonomously.
+  See "Recommended Usage: Run as Task Agent" section for the prompt template.
+
   CRITICAL: When using this skill, NEVER use raw git commit/push commands. ALWAYS use commit-and-push.sh script.
   The user has NOT granted permission for raw git commands - only the script is allowed.
 ---
@@ -23,6 +26,42 @@ description: |
 | `git push origin` | `~/.claude/skills/pr-review-loop/scripts/commit-and-push.sh "msg"` |
 
 **If you use `git commit` or `git push` directly, it will be BLOCKED.**
+
+---
+
+## ⭐ Recommended Usage: Run as Task Agent
+
+**The PR review loop should be executed as a background Task, not in the main conversation.**
+
+When the user creates a PR or wants to iterate on reviews, spawn a Task agent to handle the loop autonomously:
+
+```
+Task tool:
+  subagent_type: general-purpose
+  model: sonnet
+  description: PR review loop for #<PR>
+  prompt: |
+    Execute the PR review feedback loop for PR #<PR>. Follow the workflow documented in
+    ~/.claude/skills/pr-review-loop/SKILL.md (you have full access to read this file).
+
+    The autonomous loop workflow:
+    1. Check for unresolved comments: get-review-comments.sh <PR> --with-ids --wait
+    2. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with reply-to-comment.sh
+    3. Commit and push: commit-and-push.sh "message" (NEVER use raw git commands)
+    4. Trigger next review: trigger-review.sh <PR> --wait
+    5. Repeat steps 1-4 until no new unresolved comments
+    6. Do ONE MORE verification loop (see "Diminishing Returns Detection" in SKILL.md)
+    7. Report back when ready to merge or if user input is needed
+
+    Critical rules (see SKILL.md for details):
+    - ALWAYS use commit-and-push.sh, NEVER git commit/push
+    - ALWAYS reply to every comment using reply-to-comment.sh
+    - ALWAYS use --wait flags when polling for reviews
+    - Be skeptical of review suggestions - not all should be implemented
+    - Track state with TodoWrite (especially "final verification loop" todo)
+```
+
+This keeps the main conversation clean while the agent autonomously handles the review cycles.
 
 ---
 
