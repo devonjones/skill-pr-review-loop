@@ -3,7 +3,10 @@ name: pr-review-loop
 description: |
   Manage the PR review feedback loop: monitor CI checks, fetch review comments, and iterate on fixes.
   Use when: (1) pushing changes to a PR and waiting for CI/reviews, (2) user says "new reviews available",
-  (3) iterating on PR feedback from Gemini Code Assist or other reviewers, (4) monitoring PR status.
+  (3) iterating on PR feedback from Gemini, Cursor, Claude, or other reviewers, (4) monitoring PR status.
+
+  Supports multiple review bots: Gemini Code Assist, Cursor Bugbot, and Claude agent fallback.
+  Automatically detects priority levels from different bot formats and handles rate limits.
 
   RECOMMENDED: Spawn a Task agent (subagent_type: general-purpose) to execute the review loop autonomously.
   See "Recommended Usage: Run as Task Agent" section for the prompt template.
@@ -65,8 +68,17 @@ This keeps the main conversation clean while the agent autonomously handles the 
 
 ---
 
-Streamline the push-review-fix cycle for PRs with automated reviewers like Gemini Code Assist.
-Automatically detects Gemini rate limits and falls back to Claude agent for code reviews.
+Streamline the push-review-fix cycle for PRs with automated reviewers.
+
+## Supported Review Bots
+
+| Bot | Trigger | Priority Format |
+|-----|---------|-----------------|
+| **Gemini Code Assist** | `/gemini review` comment | `![critical]`, `![high]`, `![medium]`, `![low]` |
+| **Cursor Bugbot** | Auto on push | `<!-- **High Severity** -->`, `### Bug:` |
+| **Claude** | Manual via script | `**Critical**`, `### Critical Issues` |
+
+Priority detection automatically parses all formats when summarizing and fetching comments.
 
 ## Critical: Be Skeptical of Reviews
 
@@ -161,34 +173,28 @@ The `--wait` flag polls for up to 5 minutes until new comments appear. Do NOT us
 - Deferred: "Good catch, tracking in #issue"
 - Acknowledged: "Acknowledged - [explanation]"
 
-## Gemini Rate Limit Fallback
+## Triggering Reviews by Bot Type
 
-Gemini Code Assist has a daily quota. When exceeded, the skill automatically detects this and provides Claude fallback.
+### Gemini Code Assist (Default)
+```bash
+~/.claude/skills/pr-review-loop/scripts/trigger-review.sh <PR> --gemini --wait
+```
+Gemini has a daily quota. When exceeded, the skill automatically detects this and suggests alternatives.
 
-### Detection
+### Cursor Bugbot
+```bash
+~/.claude/skills/pr-review-loop/scripts/trigger-review.sh <PR> --cursor --wait
+```
+Cursor auto-reviews on push, so `--cursor` just waits for comments to appear (typically 1-2 minutes).
 
-The `watch-pr.sh` and `trigger-review.sh` scripts detect rate limiting by checking for Gemini's quota warning message:
-> "You have reached your daily quota limit"
-
-### Fallback Options
-
-When rate-limited, you have two options:
-
-**Option 1: Use `--claude` flag**
+### Claude Agent (Fallback)
 ```bash
 ~/.claude/skills/pr-review-loop/scripts/trigger-review.sh <PR> --claude
 ```
-
-**Option 2: Run Claude review directly**
-```bash
-~/.claude/skills/pr-review-loop/scripts/claude-review.sh <PR>
-```
-
-This outputs a prompt for the Task tool to spawn a Claude agent that:
-1. Fetches the PR diff and changed files
-2. Reads the full files for context (not just the diff)
-3. Analyzes for critical, medium, and minor issues
-4. Posts a formatted review comment to the PR
+Uses a Claude agent to review the PR and post comments. Useful when:
+- Gemini is rate-limited
+- You want a different perspective
+- Cursor isn't configured on the repo
 
 ### Claude Review Workflow
 
@@ -211,6 +217,15 @@ When using Claude fallback:
 
 4. **Continue the normal review loop** - address comments using `reply-to-comment.sh`
 
+## Rate Limit Detection
+
+The scripts automatically detect Gemini quota limits by checking for:
+> "You have reached your daily quota limit"
+
+When detected, the script suggests:
+1. Use Cursor if available: `--cursor --wait`
+2. Use Claude fallback: `--claude`
+
 ## Scripts
 
 | Script | Purpose |
@@ -218,7 +233,7 @@ When using Claude fallback:
 | `commit-and-push.sh "msg"` | **ALWAYS USE** - Never use raw git commit/push |
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
 | `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch comments, polls 5min if --wait |
-| `trigger-review.sh [PR] [--wait] [--claude]` | **USE --wait** - Trigger review and poll for response |
+| `trigger-review.sh [PR] [--gemini\|--cursor\|--claude] [--wait]` | **USE --wait** - Trigger review and poll for response |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
 | `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
@@ -237,5 +252,6 @@ Bash(~/.claude/skills/pr-review-loop/scripts/trigger-review.sh:*)
 ## Prerequisites
 
 - `gh` CLI authenticated
-- `pre-commit` installed globally (`pip install pre-commit`)
-- Pre-commit hooks configured in repo (`.pre-commit-config.yaml`)
+- `pre-commit` (optional) - If `.pre-commit-config.yaml` exists in the repo, pre-commit will be run.
+  If pre-commit is not installed, a warning is shown but commits proceed.
+  Install with: `pip install pre-commit && pre-commit install`

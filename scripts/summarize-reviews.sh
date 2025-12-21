@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# Load shared jq helpers
+source "$(dirname "${BASH_SOURCE[0]}")/_jq_helpers.sh"
+
 PR_NUMBER="${1:?Usage: summarize-reviews.sh <pr-number> [--all]}"
 INCLUDE_RESOLVED=false
 
@@ -71,12 +74,16 @@ if [[ "$COMMENTS" == "[]" ]]; then
     exit 0
 fi
 
+# PRIORITY_DETECT is now loaded from _jq_helpers.sh
+
 # Count by priority
 echo "## By Priority"
-echo "$COMMENTS" | jq -r '
-    group_by(.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown") |
+echo "$COMMENTS" | jq -r "$PRIORITY_DETECT"'
+    [.[] | . + {priority: (.body | detect_priority)}] |
+    group_by(.priority) |
+    sort_by(.[0].priority | if . == "critical" then 0 elif . == "high" then 1 elif . == "medium" then 2 elif . == "low" then 3 else 4 end) |
     .[] |
-    "- \(.[0].body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown"): \(length) comments"
+    "- \(.[0].priority): \(length) comment(s)"
 '
 echo ""
 
@@ -85,14 +92,14 @@ echo "## By File"
 echo "$COMMENTS" | jq -r '
     group_by(.path) |
     .[] |
-    "- \(.[0].path): \(length) comments"
+    "- \(.[0].path): \(length) comment(s)"
 '
 echo ""
 
-# List high priority items
-echo "## High Priority Items"
-echo "$COMMENTS" | jq -r '
+# List critical and high priority items
+echo "## Critical/High Priority Items"
+echo "$COMMENTS" | jq -r "$PRIORITY_DETECT"'
     .[] |
-    select(.body | test("!\\[high\\]")) |
-    "- [\(.path):\(.line // .originalLine // "?")] \(.body | split("\n")[0] | gsub("!\\[high\\]\\([^)]+\\)"; "") | .[0:80])"
+    select((.body | detect_priority) == "critical" or (.body | detect_priority) == "high") |
+    "- [\(.path):\(.line // .originalLine // "?")] [\(.body | detect_priority)] \(.body | split("\n")[0] | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | .[0:80])"
 '

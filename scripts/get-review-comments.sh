@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# Load shared jq helpers
+source "$(dirname "${BASH_SOURCE[0]}")/_jq_helpers.sh"
+
 PR_NUMBER="${1:?Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all]}"
 shift
 
@@ -93,7 +96,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
             fi
 
             # Check for Gemini quota exceeded
-            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
             if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
                 echo "Gemini is rate-limited. Use Claude fallback:"
                 echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -115,7 +118,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 fi
 
 # Check for Gemini rate-limit in PR comments
-RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
 if [[ "$RATE_LIMITED" == "true" ]]; then
     echo "⚠️  Gemini is rate-limited. Use Claude fallback:"
     echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -164,26 +167,28 @@ if [[ -z "$RESULT" ]]; then
 fi
 
 # Process and filter the results
-echo "$RESULT" | jq -r --arg since "$SINCE_COMMIT" --argjson resolved "$INCLUDE_RESOLVED" --argjson withIds "$WITH_IDS" '
+# PRIORITY_DETECT is loaded from _jq_helpers.sh
+echo "$RESULT" | jq -r --arg since "$SINCE_COMMIT" --argjson resolved "$INCLUDE_RESOLVED" --argjson withIds "$WITH_IDS" "$PRIORITY_DETECT"'
     .data.repository.pullRequest.reviewThreads.nodes[] |
     select($resolved or .isResolved == false) |
     .comments.nodes[0] as $comment |
     select($comment != null) |
     select($since == "" or ($comment.commit.oid // "") >= $since) |
+    ($comment.body | detect_priority) as $priority |
     if $withIds then
         "=== Comment ID: \($comment.databaseId) | Node ID: \($comment.id) ===",
         "File: \($comment.path):\($comment.line // $comment.originalLine // "?")",
-        "Priority: \($comment.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown")",
+        "Priority: \($priority)",
         "",
-        ($comment.body | gsub("!\\[(high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
+        ($comment.body | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
         "",
         "---",
         ""
     else
         "[\($comment.path):\($comment.line // $comment.originalLine // "?")]",
-        "Priority: \($comment.body | capture("!\\[(?<p>high|medium|low)\\]") | .p // "unknown")",
+        "Priority: \($priority)",
         "",
-        ($comment.body | gsub("!\\[(high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
+        ($comment.body | gsub("!\\[(critical|high|medium|low)\\]\\([^)]+\\)"; "") | gsub("```suggestion"; "SUGGESTION:") | gsub("```"; "")),
         "",
         "---",
         ""
