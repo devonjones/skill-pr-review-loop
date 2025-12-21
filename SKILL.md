@@ -35,7 +35,7 @@ description: |
 
 When the user creates a PR or wants to iterate on reviews, spawn a Task agent to handle the loop autonomously:
 
-```
+```yaml
 Task tool:
   subagent_type: general-purpose
   model: sonnet
