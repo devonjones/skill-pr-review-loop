@@ -24,13 +24,13 @@ if command -v pre-commit &>/dev/null && [[ -f ".pre-commit-config.yaml" ]]; then
         # Pre-commit may have auto-fixed files - stage them and try again
         git add -A
         if ! pre-commit run --all-files; then
-            echo "Pre-commit failed. Please fix issues and try again."
+            echo "Pre-commit failed. Please fix issues and try again." >&2
             exit 1
         fi
     fi
 elif [[ -f ".pre-commit-config.yaml" ]]; then
-    echo "Note: .pre-commit-config.yaml exists but pre-commit is not installed."
-    echo "Consider running: pip install pre-commit && pre-commit install"
+    echo "Note: .pre-commit-config.yaml exists but pre-commit is not installed." >&2
+    echo "Consider running: pip install pre-commit && pre-commit install" >&2
 fi
 # Skip pre-commit silently if neither pre-commit nor config exists
 
