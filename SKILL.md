@@ -44,13 +44,14 @@ Task tool:
     Execute the PR review feedback loop for PR #<PR>.
 
     The autonomous loop workflow:
-    1. Check for unresolved comments: scripts/get-review-comments.sh <PR> --with-ids --wait
-    2. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with scripts/reply-to-comment.sh
-    3. Commit and push: scripts/commit-and-push.sh "message" (NEVER use raw git commands)
-    4. Trigger next review: scripts/trigger-review.sh <PR> --wait
-    5. Repeat steps 1-4 until no new unresolved comments
-    6. Do ONE MORE verification loop - if no actionable feedback, you're done
-    7. Report back when ready to merge or if user input is needed
+    1. Get summary of comments: scripts/summarize-reviews.sh <PR>
+    2. Check for unresolved comments: scripts/get-review-comments.sh <PR> --with-ids --wait
+    3. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with scripts/reply-to-comment.sh
+    4. Commit and push: scripts/commit-and-push.sh "message" (NEVER use raw git commands)
+    5. Trigger next review: scripts/trigger-review.sh <PR> --wait
+    6. Repeat steps 1-5 until no new unresolved comments
+    7. Do ONE MORE verification loop - if no actionable feedback, you're done
+    8. Report back when ready to merge or if user input is needed
 
     Critical rules:
     - ALWAYS use commit-and-push.sh, NEVER git commit/push
