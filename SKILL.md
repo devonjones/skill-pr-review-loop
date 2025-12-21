@@ -47,7 +47,7 @@ Task tool:
     1. Get summary of comments: scripts/summarize-reviews.sh <PR>
     2. Check for unresolved comments: scripts/get-review-comments.sh <PR> --with-ids --wait
     3. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with scripts/reply-to-comment.sh
-    4. Commit and push: scripts/commit-and-push.sh "message" (NEVER use raw git commands)
+    4. Commit and push: scripts/commit-and-push.sh "fix: address review comments" (NEVER use raw git commands)
     5. Trigger next review: scripts/trigger-review.sh <PR> --wait
     6. Repeat steps 1-5 until no new unresolved comments
     7. Do ONE MORE verification loop - if no actionable feedback, you're done
