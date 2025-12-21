@@ -41,22 +41,21 @@ Task tool:
   model: sonnet
   description: PR review loop for #<PR>
   prompt: |
-    Execute the PR review feedback loop for PR #<PR>. Follow the workflow documented in
-    ~/.claude/skills/pr-review-loop/SKILL.md (you have full access to read this file).
+    Execute the PR review feedback loop for PR #<PR>.
 
     The autonomous loop workflow:
-    1. Check for unresolved comments: get-review-comments.sh <PR> --with-ids --wait
-    2. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with reply-to-comment.sh
-    3. Commit and push: commit-and-push.sh "message" (NEVER use raw git commands)
-    4. Trigger next review: trigger-review.sh <PR> --wait
+    1. Check for unresolved comments: scripts/get-review-comments.sh <PR> --with-ids --wait
+    2. For EACH comment: evaluate critically, fix if worthwhile, ALWAYS reply with scripts/reply-to-comment.sh
+    3. Commit and push: scripts/commit-and-push.sh "message" (NEVER use raw git commands)
+    4. Trigger next review: scripts/trigger-review.sh <PR> --wait
     5. Repeat steps 1-4 until no new unresolved comments
-    6. Do ONE MORE verification loop (see "Diminishing Returns Detection" in SKILL.md)
+    6. Do ONE MORE verification loop - if no actionable feedback, you're done
     7. Report back when ready to merge or if user input is needed
 
-    Critical rules (see SKILL.md for details):
+    Critical rules:
     - ALWAYS use commit-and-push.sh, NEVER git commit/push
     - ALWAYS reply to every comment using reply-to-comment.sh
-    - ALWAYS use --wait flags when polling for reviews
+    - ALWAYS use --wait flags when polling for reviews (5min timeout)
     - Be skeptical of review suggestions - not all should be implemented
     - Track state with TodoWrite (especially "final verification loop" todo)
 ```
