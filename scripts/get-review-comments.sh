@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# Load shared jq helpers
+source "$(dirname "${BASH_SOURCE[0]}")/_jq_helpers.sh"
+
 PR_NUMBER="${1:?Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all]}"
 shift
 
@@ -164,35 +167,8 @@ if [[ -z "$RESULT" ]]; then
 fi
 
 # Process and filter the results
-# Priority detection supports multiple bot formats:
-# - Gemini: ![critical], ![high], ![medium], ![low]
-# - Cursor: <!-- **High Severity** -->, <!-- **Critical Severity** -->
-# - Claude: **Critical**, ### Critical Issues, CRITICAL
-echo "$RESULT" | jq -r --arg since "$SINCE_COMMIT" --argjson resolved "$INCLUDE_RESOLVED" --argjson withIds "$WITH_IDS" '
-    # Function to detect priority from various bot formats
-    def detect_priority:
-        # Gemini format: ![critical], ![high], ![medium], ![low]
-        if test("!\\[critical\\]"; "i") then "critical"
-        elif test("!\\[high\\]"; "i") then "high"
-        elif test("!\\[medium\\]"; "i") then "medium"
-        elif test("!\\[low\\]"; "i") then "low"
-        # Cursor format: <!-- **High Severity** -->
-        elif test("Critical Severity"; "i") then "critical"
-        elif test("High Severity"; "i") then "high"
-        elif test("Medium Severity"; "i") then "medium"
-        elif test("Low Severity"; "i") then "low"
-        # Claude/general markdown: **Critical**, ### Critical, CRITICAL:
-        elif test("\\*\\*Critical"; "i") or test("### Critical"; "i") or test("CRITICAL:"; "") then "critical"
-        elif test("\\*\\*High"; "i") or test("### High"; "i") or test("HIGH:"; "") then "high"
-        elif test("\\*\\*Medium"; "i") or test("### Medium"; "i") or test("MEDIUM:"; "") then "medium"
-        elif test("\\*\\*Low"; "i") or test("### Low"; "i") or test("LOW:"; "") then "low"
-        # Cursor Bug headers
-        elif test("### Bug:"; "") then "high"
-        elif test("### Issue:"; "") then "medium"
-        elif test("### Suggestion:"; "") then "low"
-        else "unknown"
-        end;
-
+# PRIORITY_DETECT is loaded from _jq_helpers.sh
+echo "$RESULT" | jq -r --arg since "$SINCE_COMMIT" --argjson resolved "$INCLUDE_RESOLVED" --argjson withIds "$WITH_IDS" "$PRIORITY_DETECT"'
     .data.repository.pullRequest.reviewThreads.nodes[] |
     select($resolved or .isResolved == false) |
     .comments.nodes[0] as $comment |
